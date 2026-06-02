@@ -3,9 +3,7 @@ import datetime
 import pandas as pd
 import numpy as np
 import joblib
-import folium
-from folium.plugins import HeatMap
-from streamlit_folium import st_folium
+import pydeck as pdk
 
 st.set_page_config(page_title="CA Wildfire Predictor", layout="wide")
 st.title("🔥 Northern California Wildfire Probability Engine")
@@ -29,6 +27,9 @@ SCENARIOS = {
     }
 }
 
+# ---------------------------------------------------------
+# PIPELINE INFERENCE EXECUTION LAYER
+# ---------------------------------------------------------
 @st.cache_resource
 def load_ml_pipeline():
     """Loads the true calibrated_xgb model and county geography rules."""
@@ -40,50 +41,30 @@ model, county_df = load_ml_pipeline()
 
 @st.cache_data
 def run_cached_inference(scenario_name):
-    """Assembles features sequentially matching the exact training column alignment."""
+    """Assembles features matching the exact training column alignment cleanly."""
     features = SCENARIOS[scenario_name]
     inference_data = []
     
     for _, row in county_df.iterrows():
-        base = {"county": row['county'], "lat": row['lat'], "long": row['long']}
+        # Keep column naming completely uniform ('lat', 'long') throughout the pipeline
+        base = {
+            "county": row['county'], 
+            "lat": float(row['lat']), 
+            "long": float(row['long'])
+        }
         base.update(features)
         inference_data.append(base)
         
     df = pd.DataFrame(inference_data)
     
+    # EXACT COLUMN LIST AND ORDER MATCHING YOUR TRAINING LOGIC
     feature_cols = ['avgtempF', 'totalSnow_cm', 'humid', 'wind', 'precip', 'sunHour', 'lat', 'long', 'ndvi', 'temp_humid_idx']
     X_infer = df[feature_cols]
     
+    # Run inference and append prediction directly to the structurally sound dataframe
     probabilities = model.predict_proba(X_infer)[:, 1]
-    df["fire_probability"] = probabilities
+    df["fire_probability"] = probabilities.astype(float)
     return df
-
-@st.cache_resource
-def generate_raster_heatmap(scenario_name):
-    """SOLUTION 3: Compiles a smooth continuous HeatMap plume using localized points."""
-    df_results = run_cached_inference(scenario_name)
-    
-    # Initialize basic map centered over Northern CA
-    m = folium.Map(location=[39.5, -121.5], zoom_start=6, tiles="cartodbpositron")
-    
-    df_results['lat'] = df_results['lat'].astype(float)
-    df_results['long'] = df_results['long'].astype(float)
-    df_results['fire_probability'] = df_results['fire_probability'].astype(float)
-    
-    # Parse data array matching Leaflet input shape: [lat, long, weight]
-    heatmap_data = df_results[["lat", "long", "fire_probability"]].values.tolist()
-    
-    # Inject continuous raster overlay framework
-    HeatMap(
-        data=heatmap_data,
-        radius=45,       # Smooth bleeding adjustments
-        blur=25,
-        min_opacity=0.15,
-        max_zoom=10,
-        gradient={0.1: "blue", 0.3: "green", 0.5: "orange", 0.75: "red"}
-    ).add_to(m)
-    
-    return m
 
 # ---------------------------------------------------------
 # APP INTERFACE DISPLAY
@@ -109,8 +90,35 @@ with col_metrics:
     st.success("⚡ **Inference Execution Log**")
     st.write("Model Framework: `CalibratedClassifierCV`")
     st.write("Base Estimator: `XGBClassifier`")
-    st.write("Cache State: **Active (Instant Return)**")
+    st.write("Map Layer: `Native Pydeck Heatmap`")
 
 with col_map:
-    map_object = generate_raster_heatmap(preset)
-    st_folium(map_object, width=800, height=520, key="wildfire_map", returned_objects=[])
+    # 1. Fetch our clean calculation matrix
+    df_map = run_cached_inference(preset)
+    
+    # 2. Configure the native WebGL Heatmap layer pointing directly to our unified '[long, lat]' keys
+    heatmap_layer = pdk.Layer(
+        "HeatmapLayer",
+        data=df_map,
+        get_position="[long, lat]",  # Pointing directly to our uniform dataframe keys
+        get_weight="fire_probability",
+        radius_pixels=90,      
+        intensity=1.5,         
+        threshold=0.01,
+        opacity=0.85,
+    )
+    
+    # 3. Establish camera perspective centered over Northern California
+    view_state = pdk.ViewState(
+        latitude=39.5,
+        longitude=-121.5,
+        zoom=5.8,
+        pitch=0
+    )
+    
+    # 4. Render native map component using a token-free open-source style
+    st.pydeck_chart(pdk.Deck(
+        layers=[heatmap_layer],
+        initial_view_state=view_state,
+        map_style="carto_light"
+    ))
