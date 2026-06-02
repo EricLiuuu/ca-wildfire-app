@@ -66,6 +66,10 @@ def generate_raster_heatmap(scenario_name):
     # Initialize basic map centered over Northern CA
     m = folium.Map(location=[39.5, -121.5], zoom_start=6, tiles="cartodbpositron")
     
+    df_results['lat'] = df_results['lat'].astype(float)
+    df_results['long'] = df_results['long'].astype(float)
+    df_results['fire_probability'] = df_results['fire_probability'].astype(float)
+    
     # Parse data array matching Leaflet input shape: [lat, long, weight]
     heatmap_data = df_results[["lat", "long", "fire_probability"]].values.tolist()
     
