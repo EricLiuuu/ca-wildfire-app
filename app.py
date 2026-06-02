@@ -113,4 +113,4 @@ with col_metrics:
 
 with col_map:
     map_object = generate_raster_heatmap(preset)
-    st_folium(map_object, width=800, height=520, key=f"heatmap_view_{preset}")
+    st_folium(map_object, width=800, height=520, key="wildfire_map", returned_objects=[])
